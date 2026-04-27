@@ -333,7 +333,7 @@ function SessionPageContent() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!prompt.trim() || isProcessing) return;
+    if (!connected || !prompt.trim() || isProcessing) return;
 
     sendPrompt(prompt, selectedModel, reasoningEffort);
     setPrompt("");
@@ -712,6 +712,14 @@ function SessionContent({
     [fallbackSessionInfo, sessionState]
   );
   const showTimelineSkeleton = events.length === 0 && (connecting || replaying);
+  const promptDisabled = !connected;
+  const sendDisabled = promptDisabled || !prompt.trim() || isProcessing;
+  const connectionLostMessage =
+    sessionState && !connected
+      ? connecting
+        ? "Connection lost. Reconnecting..."
+        : "Connection lost. Reconnect to continue messaging the agent."
+      : null;
 
   return (
     <div className="h-full flex flex-col">
@@ -995,7 +1003,16 @@ function SessionContent({
           </div>
 
           {/* Input container */}
-          <div className="border border-border bg-input">
+          <div
+            className={`border border-border transition ${
+              promptDisabled ? "bg-muted/40 opacity-70" : "bg-input"
+            }`}
+          >
+            {connectionLostMessage && (
+              <div className="border-b border-border-muted px-4 py-2 text-sm text-muted-foreground">
+                {connectionLostMessage}
+              </div>
+            )}
             {/* Text input area with floating send button */}
             <div className="relative">
               <textarea
@@ -1003,8 +1020,15 @@ function SessionContent({
                 value={prompt}
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
-                placeholder={isProcessing ? "Type your next message..." : "Ask or build anything"}
-                className="w-full resize-none bg-transparent px-4 pt-4 pb-12 focus:outline-none text-foreground placeholder:text-secondary-foreground"
+                placeholder={
+                  promptDisabled
+                    ? "Connection lost"
+                    : isProcessing
+                      ? "Type your next message..."
+                      : "Ask or build anything"
+                }
+                disabled={promptDisabled}
+                className="w-full resize-none bg-transparent px-4 pt-4 pb-12 focus:outline-none text-foreground placeholder:text-secondary-foreground disabled:cursor-not-allowed disabled:text-muted-foreground"
                 rows={3}
               />
               {/* Floating action buttons */}
@@ -1024,17 +1048,21 @@ function SessionContent({
                 )}
                 <button
                   type="submit"
-                  disabled={!prompt.trim() || isProcessing}
+                  disabled={sendDisabled}
                   className="p-2 text-secondary-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed transition"
                   title={
-                    isProcessing && prompt.trim()
-                      ? "Wait for execution to complete"
-                      : `Send (${SHORTCUT_LABELS.SEND_PROMPT})`
+                    promptDisabled
+                      ? "Connection lost"
+                      : isProcessing && prompt.trim()
+                        ? "Wait for execution to complete"
+                        : `Send (${SHORTCUT_LABELS.SEND_PROMPT})`
                   }
                   aria-label={
-                    isProcessing && prompt.trim()
-                      ? "Wait for execution to complete"
-                      : `Send (${SHORTCUT_LABELS.SEND_PROMPT})`
+                    promptDisabled
+                      ? "Connection lost"
+                      : isProcessing && prompt.trim()
+                        ? "Wait for execution to complete"
+                        : `Send (${SHORTCUT_LABELS.SEND_PROMPT})`
                   }
                 >
                   <SendIcon className="w-5 h-5" />
@@ -1061,7 +1089,7 @@ function SessionContent({
                   }
                   direction="up"
                   dropdownWidth="w-56"
-                  disabled={isProcessing}
+                  disabled={promptDisabled || isProcessing}
                   triggerClassName="flex max-w-full items-center gap-1 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition"
                 >
                   <ModelIcon className="w-3.5 h-3.5" />
@@ -1075,7 +1103,7 @@ function SessionContent({
                   selectedModel={selectedModel}
                   reasoningEffort={reasoningEffort}
                   onSelect={setReasoningEffort}
-                  disabled={isProcessing}
+                  disabled={promptDisabled || isProcessing}
                 />
               </div>
 
