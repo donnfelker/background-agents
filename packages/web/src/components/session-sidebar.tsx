@@ -38,8 +38,6 @@ import type { Session } from "@open-inspect/shared";
 
 export type SessionItem = Session;
 
-type SessionsResponse = { sessions: SessionItem[] };
-
 export const MOBILE_LONG_PRESS_MS = 450;
 const MOBILE_LONG_PRESS_MOVE_THRESHOLD_PX = 10;
 
@@ -222,6 +220,25 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
     }
   }, [isMobile, onSessionSelect]);
 
+  const handleSessionRenamed = useCallback((sessionId: string, title: string) => {
+    const updatedAt = Date.now();
+    const updateSessionTitle = (session: SessionItem): SessionItem =>
+      session.id === sessionId ? { ...session, title, updatedAt } : session;
+
+    setExtraSessions((prev) => prev.map(updateSessionTitle));
+    void mutate<SessionListResponse>(
+      SIDEBAR_SESSIONS_KEY,
+      (currentData) =>
+        currentData
+          ? {
+              ...currentData,
+              sessions: currentData.sessions.map(updateSessionTitle),
+            }
+          : currentData,
+      { revalidate: false }
+    );
+  }, []);
+
   return (
     <aside className="w-72 h-dvh flex flex-col border-r border-border-muted bg-background">
       {/* Header */}
@@ -328,6 +345,7 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
                 currentSessionId={currentSessionId}
                 isMobile={isMobile}
                 onSessionSelect={onSessionSelect}
+                onSessionRenamed={handleSessionRenamed}
               />
             ))}
 
@@ -347,6 +365,7 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
                     currentSessionId={currentSessionId}
                     isMobile={isMobile}
                     onSessionSelect={onSessionSelect}
+                    onSessionRenamed={handleSessionRenamed}
                   />
                 ))}
               </>
@@ -418,12 +437,14 @@ function SessionWithChildren({
   currentSessionId,
   isMobile,
   onSessionSelect,
+  onSessionRenamed,
 }: {
   session: SessionItem;
   childSessions?: SessionItem[];
   currentSessionId: string | null;
   isMobile: boolean;
   onSessionSelect?: () => void;
+  onSessionRenamed: (sessionId: string, title: string) => void;
 }) {
   return (
     <>
@@ -432,6 +453,7 @@ function SessionWithChildren({
         isActive={session.id === currentSessionId}
         isMobile={isMobile}
         onSessionSelect={onSessionSelect}
+        onSessionRenamed={onSessionRenamed}
       />
       {childSessions &&
         childSessions.map((child) => (
@@ -452,11 +474,13 @@ function SessionListItem({
   isActive,
   isMobile,
   onSessionSelect,
+  onSessionRenamed,
 }: {
   session: SessionItem;
   isActive: boolean;
   isMobile: boolean;
   onSessionSelect?: () => void;
+  onSessionRenamed: (sessionId: string, title: string) => void;
 }) {
   const timestamp = session.updatedAt || session.createdAt;
   const relativeTime = formatRelativeTime(timestamp);
@@ -467,6 +491,7 @@ function SessionListItem({
   const [isRenaming, setIsRenaming] = useState(false);
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [title, setTitle] = useState(displayTitle);
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -482,6 +507,17 @@ function SessionListItem({
     setTitle(displayTitle);
     setIsRenaming(true);
   };
+
+  useEffect(() => {
+    if (!isRenaming) return;
+
+    const timeout = window.setTimeout(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+  }, [isRenaming]);
 
   const handleCancelRename = () => {
     setTitle(displayTitle);
@@ -499,39 +535,16 @@ function SessionListItem({
     const previousTitle = displayTitle;
     setIsRenaming(false);
 
-    const updateSessionsTitle = (data?: SessionsResponse): SessionsResponse => ({
-      sessions: (data?.sessions ?? []).map((currentSession) =>
-        currentSession.id === session.id
-          ? {
-              ...currentSession,
-              title: trimmed,
-              updatedAt: Date.now(),
-            }
-          : currentSession
-      ),
-    });
-
     try {
-      await mutate<SessionsResponse>(
-        "/api/sessions",
-        async (currentData?: SessionsResponse) => {
-          const response = await fetch(`/api/sessions/${session.id}/title`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ title: trimmed }),
-          });
-          if (!response.ok) {
-            throw new Error("Failed to update session title");
-          }
-          return updateSessionsTitle(currentData);
-        },
-        {
-          optimisticData: updateSessionsTitle,
-          rollbackOnError: true,
-          populateCache: true,
-          revalidate: true,
-        }
-      );
+      const response = await fetch(`/api/sessions/${session.id}/title`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: trimmed }),
+      });
+      if (!response.ok) {
+        throw new Error("Failed to update session title");
+      }
+      onSessionRenamed(session.id, trimmed);
     } catch {
       setTitle(previousTitle);
       setIsRenaming(true);
@@ -598,6 +611,7 @@ function SessionListItem({
       {isRenaming ? (
         <>
           <input
+            ref={renameInputRef}
             autoFocus
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -685,7 +699,7 @@ function SessionListItem({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={handleStartRename}>Rename</DropdownMenuItem>
+            <DropdownMenuItem onSelect={handleStartRename}>Rename</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
