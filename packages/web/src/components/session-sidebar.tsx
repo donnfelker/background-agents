@@ -7,6 +7,7 @@ import { useSession, signOut } from "next-auth/react";
 import useSWR, { mutate } from "swr";
 import { formatRelativeTime, isInactiveSession } from "@/lib/time";
 import {
+  applyTitleUpdate,
   buildSessionsPageKey,
   mergeUniqueSessions,
   SIDEBAR_SESSIONS_KEY,
@@ -222,19 +223,12 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
 
   const handleSessionRenamed = useCallback((sessionId: string, title: string) => {
     const updatedAt = Date.now();
-    const updateSessionTitle = (session: SessionItem): SessionItem =>
-      session.id === sessionId ? { ...session, title, updatedAt } : session;
-
-    setExtraSessions((prev) => prev.map(updateSessionTitle));
+    setExtraSessions((prev) =>
+      prev.map((session) => (session.id === sessionId ? { ...session, title, updatedAt } : session))
+    );
     void mutate<SessionListResponse>(
       SIDEBAR_SESSIONS_KEY,
-      (currentData) =>
-        currentData
-          ? {
-              ...currentData,
-              sessions: currentData.sessions.map(updateSessionTitle),
-            }
-          : currentData,
+      (currentData) => applyTitleUpdate(currentData, sessionId, title, updatedAt),
       { revalidate: false }
     );
   }, []);
