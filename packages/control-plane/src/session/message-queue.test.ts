@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { SessionMessageQueue } from "./message-queue";
+import { createTestSession } from "./test-fixtures";
 import type { ClientInfo, Env, ServerMessage } from "../types";
 import type { MessageRow, ParticipantRow, SessionRow } from "./types";
 
@@ -23,33 +24,15 @@ function createParticipant(overrides: Partial<ParticipantRow> = {}): Participant
 }
 
 function createSession(overrides: Partial<SessionRow> = {}): SessionRow {
-  return {
+  return createTestSession({
     id: "sess-1",
     session_name: "s1",
     title: "Session",
-    repo_owner: "acme",
-    repo_name: "repo",
     repo_id: 1,
-    base_branch: "main",
     branch_name: null,
-    base_sha: null,
-    current_sha: null,
-    opencode_session_id: null,
-    model: "anthropic/claude-haiku-4-5",
-    reasoning_effort: null,
-    status: "active",
-    parent_session_id: null,
-    spawn_source: "user" as const,
-    spawn_depth: 0,
-    code_server_enabled: 0,
-    total_cost: 0,
-    sandbox_settings: null,
-    title_manually_set: 0,
-    title_auto_rename_attempted_at: null,
-    created_at: 1000,
     updated_at: 1000,
     ...overrides,
-  };
+  });
 }
 
 function createMessage(overrides: Partial<MessageRow> = {}): MessageRow {

@@ -6,6 +6,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ServerMessage, SessionArtifact, SessionState } from "@open-inspect/shared";
 import type * as SwrModule from "swr";
 import { SIDEBAR_SESSIONS_KEY, type SessionListResponse } from "@/lib/session-list";
+import { FakeWebSocket } from "./test-fixtures";
 import { useSessionSocket } from "./use-session-socket";
 
 const { mutateMock } = vi.hoisted(() => ({
@@ -19,45 +20,6 @@ vi.mock("swr", async () => {
     mutate: mutateMock,
   };
 });
-
-class FakeWebSocket {
-  static CONNECTING = 0;
-  static OPEN = 1;
-  static CLOSING = 2;
-  static CLOSED = 3;
-  static instances: FakeWebSocket[] = [];
-
-  onopen: ((event: Event) => void) | null = null;
-  onmessage: ((event: MessageEvent) => void) | null = null;
-  onclose: ((event: CloseEvent) => void) | null = null;
-  onerror: ((event: Event) => void) | null = null;
-  readyState = FakeWebSocket.CONNECTING;
-  sentMessages: Array<Record<string, unknown>> = [];
-
-  constructor(readonly url: string) {
-    FakeWebSocket.instances.push(this);
-  }
-
-  send(data: string) {
-    this.sentMessages.push(JSON.parse(data) as Record<string, unknown>);
-  }
-
-  close(code = 1000, reason = "", wasClean = true) {
-    this.readyState = FakeWebSocket.CLOSED;
-    this.onclose?.({ code, reason, wasClean } as CloseEvent);
-  }
-
-  open() {
-    this.readyState = FakeWebSocket.OPEN;
-    this.onopen?.(new Event("open"));
-  }
-
-  receive(message: ServerMessage) {
-    this.onmessage?.({
-      data: JSON.stringify(message),
-    } as MessageEvent);
-  }
-}
 
 function createSessionState(overrides: Partial<SessionState> = {}): SessionState {
   return {
@@ -319,10 +281,8 @@ describe("useSessionSocket", () => {
       socket.receive(createSubscribedMessage());
     });
 
-    // The subscribed handler legitimately consults the sidebar cache to
-    // mirror any newly-delivered title — that's a separate, intentional
-    // call covered by use-session-socket-sidebar-sync.test.tsx. Scope this
-    // assertion to what session_branch does on its own.
+    // The subscribed handler mirrors the title into the sidebar cache; scope
+    // this assertion to what session_branch does on its own.
     mutateMock.mockClear();
 
     act(() => {
@@ -417,11 +377,7 @@ describe("useSessionSocket", () => {
     });
   });
 
-  // Regression: when the auto-rename titler commits during the WS subscribe
-  // handshake, the server can send `session_title` on the wire BEFORE
-  // `subscribed`. Without buffering, the title was silently dropped because
-  // the handler ignored updates while sessionState was still null.
-  it("buffers a session_title that arrives before subscribed and applies it on subscribe", async () => {
+  it("ignores session_title arriving before subscribed (subscribed payload carries the latest title)", async () => {
     const { result } = renderHook(() => useSessionSocket("session-1"));
 
     await waitFor(() => {
@@ -431,55 +387,13 @@ describe("useSessionSocket", () => {
     const socket = FakeWebSocket.instances[0];
     act(() => {
       socket.open();
+      socket.receive({ type: "session_title", title: "Pre-subscribed title" });
     });
 
-    act(() => {
-      socket.receive({ type: "session_title", title: "Auto-named topic" });
-    });
-
-    // Title arrived before subscribed — sessionState is still null and the
-    // title must NOT be visible yet (nothing to merge into).
     expect(result.current.sessionState).toBeNull();
 
     act(() => {
       socket.receive(createSubscribedMessage());
-    });
-
-    // Subscribed snapshot had the stale title ("Session 1"), but the buffered
-    // session_title takes precedence.
-    await waitFor(() => {
-      expect(result.current.sessionState?.title).toBe("Auto-named topic");
-    });
-  });
-
-  it("drops a buffered session_title when the WebSocket closes before subscribed lands", async () => {
-    const { result } = renderHook(() => useSessionSocket("session-1"));
-
-    await waitFor(() => {
-      expect(FakeWebSocket.instances).toHaveLength(1);
-    });
-
-    const socket = FakeWebSocket.instances[0];
-    act(() => {
-      socket.open();
-      socket.receive({ type: "session_title", title: "Stale from old socket" });
-      // Drop unclean before subscribed lands so the hook auto-reconnects.
-      socket.close(1006, "abnormal", false);
-    });
-
-    // After reconnect, a fresh subscribed must NOT be overridden by the stale
-    // buffered title from the previous socket.
-    await waitFor(
-      () => {
-        expect(FakeWebSocket.instances.length).toBeGreaterThanOrEqual(2);
-      },
-      { timeout: 3000 }
-    );
-
-    const reconnected = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
-    act(() => {
-      reconnected.open();
-      reconnected.receive(createSubscribedMessage());
     });
 
     await waitFor(() => {
@@ -514,10 +428,6 @@ describe("useSessionSocket", () => {
       expect(result.current.sessionState?.title).toBe("Refreshed title");
     });
 
-    // Regression: the auto-rename title must also flow into the sidebar SWR
-    // cache so the session list updates in lockstep with the detail header.
-    // Without this, the sidebar stayed stale until an unrelated event
-    // (e.g. session_status) happened to revalidate the list.
     const titleCalls = mutateMock.mock.calls.filter(([key]) => key === SIDEBAR_SESSIONS_KEY);
     expect(titleCalls).toHaveLength(1);
     const [, updater, options] = titleCalls[0];
@@ -536,51 +446,5 @@ describe("useSessionSocket", () => {
       hasMore: false,
     });
     expect(updated.sessions[0].title).toBe("Refreshed title");
-  });
-
-  it("mutates the sidebar cache when a buffered session_title is applied via subscribe", async () => {
-    const { result } = renderHook(() => useSessionSocket("session-1"));
-
-    await waitFor(() => {
-      expect(FakeWebSocket.instances).toHaveLength(1);
-    });
-
-    const socket = FakeWebSocket.instances[0];
-    act(() => {
-      socket.open();
-      socket.receive({ type: "session_title", title: "Auto-named topic" });
-    });
-
-    expect(mutateMock.mock.calls.filter(([key]) => key === SIDEBAR_SESSIONS_KEY)).toHaveLength(0);
-
-    act(() => {
-      socket.receive(createSubscribedMessage());
-    });
-
-    await waitFor(() => {
-      expect(result.current.sessionState?.title).toBe("Auto-named topic");
-    });
-
-    // The buffered title must also be mirrored to the sidebar cache when it
-    // is finally applied on subscribe — same reasoning as the post-subscribed
-    // case above.
-    const titleCalls = mutateMock.mock.calls.filter(([key]) => key === SIDEBAR_SESSIONS_KEY);
-    expect(titleCalls).toHaveLength(1);
-    const [, updater, options] = titleCalls[0];
-    expect(options).toMatchObject({ revalidate: false });
-    const updated = (updater as (data: SessionListResponse | undefined) => SessionListResponse)({
-      sessions: [
-        {
-          id: "session-1",
-          title: "Session 1",
-          repoOwner: "acme",
-          repoName: "web-app",
-          createdAt: 1,
-          updatedAt: 1,
-        } as SessionListResponse["sessions"][number],
-      ],
-      hasMore: false,
-    });
-    expect(updated.sessions[0].title).toBe("Auto-named topic");
   });
 });

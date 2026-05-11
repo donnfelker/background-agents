@@ -3,6 +3,7 @@ import type { ParticipantRow, SandboxRow, SessionRow } from "../../types";
 import type { SandboxSettings } from "@open-inspect/shared";
 import type { SandboxStatus, ServerMessage, SessionStatus, SpawnSource } from "../../../types";
 import type { SessionRepository } from "../../repository";
+import { commitSessionTitle } from "../../services/session-titler";
 import { getValidModelOrDefault, isValidModel } from "../../../utils/models";
 
 const TERMINAL_STATUSES = new Set<SessionStatus>(["completed", "archived", "cancelled", "failed"]);
@@ -233,18 +234,10 @@ export function createSessionLifecycleHandler(
       }
 
       const now = deps.now();
-      deps.repository.updateSessionTitle(session.id, body.title, now);
-      // Flag the row so the background auto-rename in session-titler never
-      // overwrites a participant's explicit choice.
+      // Flag BEFORE commit so the background auto-rename never overwrites a
+      // participant's explicit choice.
       deps.repository.markTitleManuallySet(session.id, now);
-
-      const publicSessionId = deps.getPublicSessionId(session);
-      deps.syncSessionIndexTitle(publicSessionId, body.title);
-
-      deps.broadcast({
-        type: "session_title",
-        title: body.title,
-      });
+      commitSessionTitle(deps, session.id, deps.getPublicSessionId(session), body.title);
 
       return Response.json({ title: body.title });
     },

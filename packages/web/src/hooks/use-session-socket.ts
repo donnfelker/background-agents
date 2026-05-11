@@ -2,11 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { mutate } from "swr";
-import {
-  applyTitleUpdate,
-  SIDEBAR_SESSIONS_KEY,
-  type SessionListResponse,
-} from "@/lib/session-list";
+import { mutateSidebarTitle, SIDEBAR_SESSIONS_KEY } from "@/lib/session-list";
 import type { Artifact, SandboxEvent } from "@/types/session";
 import type {
   ParticipantPresence,
@@ -207,10 +203,6 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
   const [authError, setAuthError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [sessionState, setSessionState] = useState<SessionState | null>(null);
-  // Holds a session_title broadcast that arrived before "subscribed" so it
-  // can be applied once the initial state lands. Without this, the title is
-  // silently dropped (see use-session-socket.test.ts).
-  const pendingTitleRef = useRef<string | null>(null);
   const [messages, _setMessages] = useState<Message[]>([]);
   const [events, setEvents] = useState<SandboxEvent[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -287,41 +279,16 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
         case "subscribed": {
           console.log("WebSocket subscribed to session");
           subscribedRef.current = true;
-          // Replace local artifacts with the subscribed snapshot so reconnects
-          // still clear stale state instead of merging stale client data.
           setArtifacts(data.artifacts.map(toUiArtifact));
           pendingTextRef.current = null;
           if (data.state) {
-            const bufferedTitle = pendingTitleRef.current;
-            pendingTitleRef.current = null;
-            const effectiveTitle = bufferedTitle ?? data.state.title;
             setSessionState({
               ...data.state,
-              // Backward-compatible default for older sessions that may omit this.
               isProcessing: data.state.isProcessing ?? false,
               totalCost: data.state.totalCost ?? 0,
-              // Apply any session_title that arrived before "subscribed".
-              ...(bufferedTitle ? { title: bufferedTitle } : {}),
             });
-            if (effectiveTitle) {
-              // Mirror the subscribed-delivered (or buffered) title into the
-              // sidebar SWR cache. When the auto-rename titler commits before
-              // the WS subscribe handshake finishes, the new title rides in
-              // data.state.title — not as a separate session_title event —
-              // so the sidebar cache would otherwise stay stale until an
-              // unrelated event triggered a revalidate. Skip when the cached
-              // entry already matches to avoid spuriously bumping updatedAt
-              // on plain session opens.
-              void mutate<SessionListResponse>(
-                SIDEBAR_SESSIONS_KEY,
-                (current) => {
-                  if (!current) return current;
-                  const existing = current.sessions.find((s) => s.id === sessionId);
-                  if (!existing || existing.title === effectiveTitle) return current;
-                  return applyTitleUpdate(current, sessionId, effectiveTitle, Date.now());
-                },
-                { revalidate: false }
-              );
+            if (data.state.title) {
+              void mutateSidebarTitle(sessionId, data.state.title);
             }
           }
           // Store the current user's participant ID and info for author attribution
@@ -475,24 +442,13 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
           break;
 
         case "session_title":
-          if (data.title) {
+          // If this arrives before "subscribed", drop it — the subscribed
+          // payload re-reads the row server-side so it always carries the
+          // latest title (see SessionDO ws.connect handler).
+          if (data.title && subscribedRef.current) {
             const incomingTitle = data.title;
-            if (subscribedRef.current) {
-              setSessionState((prev) => (prev ? { ...prev, title: incomingTitle } : null));
-              // Mirror the title into the sidebar SWR cache so the list
-              // updates in lockstep with the detail header. Without this, the
-              // sidebar stayed stale until an unrelated event (e.g.
-              // session_status) happened to revalidate the list.
-              void mutate<SessionListResponse>(
-                SIDEBAR_SESSIONS_KEY,
-                (current) => applyTitleUpdate(current, sessionId, incomingTitle, Date.now()),
-                { revalidate: false }
-              );
-            } else {
-              // Subscribed hasn't landed yet — buffer so the "subscribed"
-              // handler can apply the title once state is initialized.
-              pendingTitleRef.current = incomingTitle;
-            }
+            setSessionState((prev) => (prev ? { ...prev, title: incomingTitle } : null));
+            void mutateSidebarTitle(sessionId, incomingTitle);
           }
           break;
 
@@ -635,9 +591,6 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
       });
       connectingRef.current = false;
       subscribedRef.current = false;
-      // Drop any buffered session_title so a stale value from this socket
-      // can't override the freshly-fetched title in the next "subscribed".
-      pendingTitleRef.current = null;
       setConnected(false);
       setConnecting(false);
       setReplaying(false);

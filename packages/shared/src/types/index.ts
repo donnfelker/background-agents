@@ -41,17 +41,8 @@ export type EventType =
   | "push_error"
   | "user_message";
 export type ParticipantRole = "owner" | "member";
-/**
- * Origin of a session. Drives the auto-rename sidebar prefix in the
- * control-plane session-titler.
- *
- * When adding a new bot integration (e.g. `"jira-bot"`, `"clickup-bot"`), also
- * update both prefix maps in
- * `packages/control-plane/src/session/services/session-titler.ts`:
- *   - `getPrefixSpec`         — deterministic fallback prefix (e.g. `"Jira: "`)
- *   - `buildPrefixInstruction` — Haiku prompt instruction for the same prefix
- * Otherwise sessions from the new integration end up with no prefix.
- */
+// When adding a new bot integration, add an entry to SPAWN_SOURCE_TITLE_META in
+// packages/control-plane/src/session/services/session-titler.ts.
 export type SpawnSource =
   | "user"
   | "agent"

@@ -49,11 +49,6 @@ interface MessageQueueDeps {
   setSessionStatus: (status: SessionStatus) => Promise<void>;
   reconcileSessionStatusAfterExecution: (success: boolean) => Promise<void>;
   scheduleExecutionTimeout?: (startedAtMs: number) => Promise<void>;
-  /**
-   * Background task to auto-generate a session title from the first prompt.
-   * Called via ctx.waitUntil after the message is persisted. Receives the raw
-   * prompt content. Wired by SessionDO; absent in tests that don't exercise it.
-   */
   triggerAutoRename?: (prompt: string) => Promise<void>;
 }
 
@@ -337,10 +332,6 @@ export class SessionMessageQueue {
     this.deps.broadcast({ type: "sandbox_event", event: userMessageEvent });
   }
 
-  /**
-   * Schedule background auto-rename on the FIRST eligible prompt for a session.
-   * Skips if title was manually set or auto-rename was already attempted.
-   */
   private maybeScheduleAutoRename(prompt: string): void {
     if (!this.deps.triggerAutoRename) return;
     const session = this.deps.getSession();

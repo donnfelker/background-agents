@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Logger } from "../logger";
 import type { Env } from "../types";
 import type { SessionRow } from "./types";
+import { createTestSession } from "./test-fixtures";
 import { OpenAITokenRefreshService } from "./openai-token-refresh-service";
 import { OpenAITokenRefreshError } from "../auth/openai";
 
@@ -69,33 +70,16 @@ vi.mock("../db/global-secrets", () => ({
 }));
 
 function createSession(overrides: Partial<SessionRow> = {}): SessionRow {
-  return {
-    id: "session-1",
+  return createTestSession({
     session_name: "session-name-1",
     title: null,
-    repo_owner: "acme",
     repo_name: "web",
-    repo_id: 123,
-    base_branch: "main",
     branch_name: null,
-    base_sha: null,
-    current_sha: null,
-    opencode_session_id: null,
     model: "openai/gpt-5.1",
-    reasoning_effort: null,
-    status: "active",
-    parent_session_id: null,
-    spawn_source: "user" as const,
-    spawn_depth: 0,
-    code_server_enabled: 0,
-    total_cost: 0,
-    sandbox_settings: null,
-    title_manually_set: 0,
-    title_auto_rename_attempted_at: null,
     created_at: 1,
     updated_at: 1,
     ...overrides,
-  };
+  });
 }
 
 function createLogger(): Logger {

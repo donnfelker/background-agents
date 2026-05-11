@@ -1,3 +1,4 @@
+import { mutate } from "swr";
 import type { Session } from "@open-inspect/shared";
 
 export const SESSIONS_PAGE_SIZE = 50;
@@ -39,8 +40,6 @@ export function buildSessionsPageKey({
   return `/api/sessions?${searchParams.toString()}`;
 }
 
-// Extracted from session-sidebar so the cache-shape transformation can be unit
-// tested without rendering the component or going through Radix/SWR.
 export function applyTitleUpdate(
   data: SessionListResponse | undefined,
   sessionId: string,
@@ -48,12 +47,26 @@ export function applyTitleUpdate(
   updatedAt: number
 ): SessionListResponse | undefined {
   if (!data) return data;
+  const existing = data.sessions.find((s) => s.id === sessionId);
+  if (!existing || existing.title === title) return data;
   return {
     ...data,
     sessions: data.sessions.map((session) =>
       session.id === sessionId ? { ...session, title, updatedAt } : session
     ),
   };
+}
+
+export function mutateSidebarTitle(
+  sessionId: string,
+  title: string,
+  updatedAt: number = Date.now()
+) {
+  return mutate<SessionListResponse>(
+    SIDEBAR_SESSIONS_KEY,
+    (current) => applyTitleUpdate(current, sessionId, title, updatedAt),
+    { revalidate: false }
+  );
 }
 
 export function mergeUniqueSessions(existing: Session[], incoming: Session[]) {

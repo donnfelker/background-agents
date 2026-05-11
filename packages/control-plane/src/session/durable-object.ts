@@ -152,11 +152,7 @@ export class SessionDO extends DurableObject<Env> {
   private _alarmHandler: AlarmHandler | null = null;
   // Sandbox event processor (lazily initialized)
   private _sandboxEventProcessor: SessionSandboxEventProcessor | null = null;
-  // Titler client for session auto-rename. Tri-state lazy:
-  //   undefined → not yet computed
-  //   null      → computed, no ANTHROPIC_API_KEY configured (fallback path only)
-  //   instance  → ready
-  // The getter caches null so the cold-start warning fires exactly once per DO.
+  // undefined → not yet computed; null → no API key; cached so the missing-key warning fires once per DO.
   private _titlerClient: TitlerClient | null | undefined;
 
   // Internal HTTP route table (transport wiring only; handlers remain on SessionDO).
@@ -347,11 +343,6 @@ export class SessionDO extends DurableObject<Env> {
     return this._messageService;
   }
 
-  /**
-   * Returns the Anthropic SDK client used for session auto-rename, or null
-   * if ANTHROPIC_API_KEY is not configured. Lazily instantiated, cached for
-   * the DO lifetime.
-   */
   private get titlerClient(): TitlerClient | null {
     if (this._titlerClient === undefined) {
       this._titlerClient = this.env.ANTHROPIC_API_KEY
@@ -1246,17 +1237,10 @@ export class SessionDO extends DurableObject<Env> {
       });
     }
 
-    // Gather session state and replay events, then send as a single message.
-    // Fetch sandbox once and thread it through to avoid a redundant SQLite read.
     const sandbox = this.getSandbox();
     const state = await this.getSessionState(sandbox);
-    // Close a race with concurrent ctx.waitUntil background tasks (e.g. the
-    // auto-rename titler) that may commit a new title between getSessionState's
-    // snapshot read and this point — the titler's Haiku call can resolve
-    // anywhere in this window, and its post-call tail (updateSessionTitle +
-    // broadcast) runs synchronously. Without this refresh, the broadcast they
-    // emit would arrive on the wire *before* "subscribed", and the client's
-    // session_title handler drops updates when sessionState is still null.
+    // Refresh title: the auto-rename titler may commit between the snapshot
+    // above and the broadcast below.
     const latestTitle = this.getSession()?.title ?? null;
     if (latestTitle !== state.title) {
       state.title = latestTitle;
@@ -1467,10 +1451,6 @@ export class SessionDO extends DurableObject<Env> {
     await this.messageQueue.processMessageQueue();
   }
 
-  /**
-   * Build deps and run the auto-rename orchestrator.
-   * Called from the message queue via ctx.waitUntil on the first eligible prompt.
-   */
   private async runAutoRenameForFirstPrompt(prompt: string): Promise<void> {
     await runAutoRename({
       deps: {
@@ -1482,7 +1462,7 @@ export class SessionDO extends DurableObject<Env> {
             this.repository.markTitleAutoRenameAttempted(sessionId, attemptedAt),
         },
         titler: ({ prompt, spawnSource }) =>
-          generateTitle({ client: this.titlerClient, prompt, spawnSource }),
+          generateTitle({ client: this.titlerClient, prompt, spawnSource, log: this.log }),
         syncSessionIndexTitle: (sessionId, title) => this.syncSessionIndexTitle(sessionId, title),
         broadcast: (message) => this.broadcast(message),
         getPublicSessionId: (session) => this.getPublicSessionId(session),

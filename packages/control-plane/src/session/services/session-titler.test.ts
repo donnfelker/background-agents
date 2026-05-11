@@ -6,6 +6,7 @@ import {
   type AutoRenameDeps,
   type TitlerClient,
 } from "./session-titler";
+import { createTestSession } from "../test-fixtures";
 import type { SessionRow } from "../types";
 
 describe("derivePromptTitle", () => {
@@ -189,33 +190,16 @@ describe("generateTitle", () => {
 });
 
 function baseSession(overrides: Partial<SessionRow> = {}): SessionRow {
-  return {
-    id: "session-1",
+  return createTestSession({
     session_name: "session-public-1",
     title: null,
-    repo_owner: "acme",
     repo_name: "web",
     repo_id: 1,
-    base_branch: "main",
     branch_name: null,
-    base_sha: null,
-    current_sha: null,
-    opencode_session_id: null,
-    model: "anthropic/claude-haiku-4-5",
-    reasoning_effort: null,
-    status: "active",
-    parent_session_id: null,
-    spawn_source: "user",
-    spawn_depth: 0,
-    code_server_enabled: 0,
-    total_cost: 0,
-    sandbox_settings: null,
-    title_manually_set: 0,
-    title_auto_rename_attempted_at: null,
     created_at: 1,
     updated_at: 1,
     ...overrides,
-  };
+  });
 }
 
 function makeDeps(overrides: Partial<AutoRenameDeps> = {}): AutoRenameDeps {

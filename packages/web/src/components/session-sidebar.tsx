@@ -18,9 +18,9 @@ import { ScrambleText } from "@/components/ScrambleText";
 import { archiveSession } from "@/lib/archive-session";
 import { formatRelativeTime, isInactiveSession } from "@/lib/time";
 import {
-  applyTitleUpdate,
   buildSessionsPageKey,
   mergeUniqueSessions,
+  mutateSidebarTitle,
   removeSessionFromList,
   SIDEBAR_SESSIONS_KEY,
   type SessionListResponse,
@@ -260,11 +260,7 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
     setExtraSessions((prev) =>
       prev.map((session) => (session.id === sessionId ? { ...session, title, updatedAt } : session))
     );
-    void mutate<SessionListResponse>(
-      SIDEBAR_SESSIONS_KEY,
-      (currentData) => applyTitleUpdate(currentData, sessionId, title, updatedAt),
-      { revalidate: false }
-    );
+    void mutateSidebarTitle(sessionId, title, updatedAt);
   }, []);
 
   return (

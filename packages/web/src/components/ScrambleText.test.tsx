@@ -78,57 +78,39 @@ describe("ScrambleText", () => {
   });
 
   it("regression: mid-animation re-render with a new onComplete identity does not cancel the in-flight animation", () => {
-    // Validates fix #2 (onComplete in deps array) and fix #1 (cleanup overwriting
-    // previousTextRef). Without these fixes, the parent passing a new inline
-    // onComplete mid-animation would re-run the effect, the cleanup would set
-    // previousTextRef to the target text, and the new effect would early-return —
-    // leaving the displayed text stuck mid-scramble and the animation incomplete.
     const onCompleteA = vi.fn();
     const onCompleteB = vi.fn();
 
     const { container, rerender } = render(<ScrambleText text="aaaa" onComplete={onCompleteA} />);
 
-    // Kick off animation A → B
     rerender(<ScrambleText text="bbbb" onComplete={onCompleteA} />);
 
-    // Partway through, parent re-renders with a new inline-style onComplete
-    // identity (text unchanged).
     act(() => {
       vi.advanceTimersByTime(100);
     });
     rerender(<ScrambleText text="bbbb" onComplete={onCompleteB} />);
 
-    // Finish the animation.
     act(() => {
       vi.advanceTimersByTime(1000);
     });
 
-    // Animation completed: displayed text reached the target.
     expect(container.querySelector("span[aria-label]")?.textContent).toBe("bbbb");
-    // The latest onComplete is the one that fires.
     expect(onCompleteB).toHaveBeenCalledTimes(1);
-    // The original onComplete should never have fired.
     expect(onCompleteA).not.toHaveBeenCalled();
   });
 
   it("regression: reverting text mid-animation snaps displayed back to the original value", () => {
-    // Without the early-return setDisplayed, a cancelled tick leaves displayed
-    // on a scrambled intermediate when text reverts to its prior value.
     const { container, rerender } = render(<ScrambleText text="aaaa" />);
 
     rerender(<ScrambleText text="bbbb" />);
-    // Partway into the animation, displayed is some scrambled intermediate.
     act(() => {
       vi.advanceTimersByTime(200);
     });
 
     rerender(<ScrambleText text="aaaa" />);
 
-    // Even without advancing further: the displayed text must snap back to "aaaa",
-    // not be left frozen on a scrambled string.
     expect(container.querySelector("span[aria-label]")?.textContent).toBe("aaaa");
 
-    // And it stays "aaaa" — no zombie animation finishes onto stale state.
     act(() => {
       vi.advanceTimersByTime(1000);
     });

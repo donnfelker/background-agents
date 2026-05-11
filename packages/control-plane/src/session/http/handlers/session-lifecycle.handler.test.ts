@@ -1,36 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ParticipantRow, SandboxRow, SessionRow } from "../../types";
+import { createTestSession } from "../../test-fixtures";
 import { createSessionLifecycleHandler } from "./session-lifecycle.handler";
 import { getValidModelOrDefault } from "../../../utils/models";
 
 function createSession(overrides: Partial<SessionRow> = {}): SessionRow {
-  return {
-    id: "session-1",
+  return createTestSession({
     session_name: "public-session-1",
     title: "Session title",
-    repo_owner: "acme",
-    repo_name: "repo",
     repo_id: 1,
-    base_branch: "main",
-    branch_name: "feature/test",
     base_sha: "base-sha",
     current_sha: "head-sha",
     opencode_session_id: "oc-1",
-    model: "anthropic/claude-haiku-4-5",
     reasoning_effort: "high",
-    status: "active",
-    parent_session_id: null,
-    spawn_source: "user",
-    spawn_depth: 0,
-    code_server_enabled: 0,
-    total_cost: 0,
-    sandbox_settings: null,
-    title_manually_set: 0,
-    title_auto_rename_attempted_at: null,
-    created_at: 1000,
-    updated_at: 2000,
     ...overrides,
-  };
+  });
 }
 
 function createSandbox(overrides: Partial<SandboxRow> = {}): SandboxRow {

@@ -67,8 +67,6 @@ export function ScrambleText({
 
     const length = Math.max(previous.length, text.length);
     const totalMs = TOTAL_DURATION_MS / Math.max(speed, 0.01);
-    // Last position starts this far into the animation; the remainder is the
-    // reveal window so the whole thing finishes at totalMs.
     const staggerWindowMs = totalMs * 0.5;
     const minRevealMs = totalMs * 0.35;
     const revealJitterMs = totalMs * 0.15;
@@ -79,7 +77,6 @@ export function ScrambleText({
       const from = previous[i] ?? "";
       const to = text[i] ?? "";
       const progress = length > 1 ? i / (length - 1) : 0;
-      // Earlier positions resolve sooner; add jitter so the wave isn't rigid.
       const jitter = (Math.random() - 0.5) * startJitterMs;
       const startMs = Math.max(0, progress * staggerWindowMs + jitter);
       const endMs = Math.min(totalMs, startMs + minRevealMs + Math.random() * revealJitterMs);
@@ -133,7 +130,7 @@ export function ScrambleText({
 
   return (
     <span className={className} aria-label={text}>
-      <span aria-hidden="true">{displayed}</span>
+      {displayed}
     </span>
   );
 }

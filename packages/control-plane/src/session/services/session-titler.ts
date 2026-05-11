@@ -9,34 +9,49 @@ const MAX_TITLE_LENGTH = 60;
 const TARGET_TITLE_LENGTH = 55;
 const UNTITLED = "Untitled session";
 
-interface PrefixSpec {
+interface SpawnSourceTitleMeta {
   prefix: string;
+  instruction: string;
 }
 
-function getPrefixSpec(spawnSource: SpawnSource | string | null | undefined): PrefixSpec {
-  switch (spawnSource) {
-    case "github-bot":
-      return { prefix: "GitHub: " };
-    case "slack-bot":
-      return { prefix: "Slack: " };
-    case "linear-bot":
-      return { prefix: "Linear: " };
-    default:
-      return { prefix: "" };
-  }
+const DEFAULT_SPAWN_SOURCE_META: SpawnSourceTitleMeta = {
+  prefix: "",
+  instruction: "Output format: just the topic, no prefix.",
+};
+
+const SPAWN_SOURCE_TITLE_META: Record<SpawnSource, SpawnSourceTitleMeta> = {
+  user: DEFAULT_SPAWN_SOURCE_META,
+  agent: DEFAULT_SPAWN_SOURCE_META,
+  automation: DEFAULT_SPAWN_SOURCE_META,
+  "github-bot": {
+    prefix: "GitHub: ",
+    instruction:
+      'Output format: "GitHub: <topic>". Replace any "PR #N" placeholder with a real topic. Comments become "GitHub: <ask>".',
+  },
+  "slack-bot": {
+    prefix: "Slack: ",
+    instruction: 'Output format: "Slack: <topic>".',
+  },
+  "linear-bot": {
+    prefix: "Linear: ",
+    instruction:
+      'Output format: "Linear: <ticket-id> – <topic>" if a ticket ID like "ABC-123" is present in the prompt; otherwise "Linear: <topic>".',
+  },
+};
+
+function getTitleMeta(spawnSource: SpawnSource | null | undefined): SpawnSourceTitleMeta {
+  if (!spawnSource) return DEFAULT_SPAWN_SOURCE_META;
+  return SPAWN_SOURCE_TITLE_META[spawnSource];
 }
 
 function sanitizePromptForTitle(prompt: string): string {
   let cleaned = prompt.replace(/```[\s\S]*?```/g, " ");
   cleaned = cleaned.replace(/https?:\/\/\S+/gi, " ");
-  // Strip paired bold/italic asterisks: **bold**, *italic*
   cleaned = cleaned.replace(/\*+([^*\n]+)\*+/g, "$1");
-  // Strip paired inline code: `code`
   cleaned = cleaned.replace(/`+([^`\n]+)`+/g, "$1");
-  // Strip paired underscore emphasis only when bounded by non-identifier chars
-  // (preserves snake_case identifiers like my_var_name)
+  // Strip paired _emphasis_ but preserve snake_case identifiers.
   cleaned = cleaned.replace(/(^|\W)_+([^_\n]+?)_+(?=\W|$)/g, "$1$2");
-  // Strip blockquote markers ONLY at line start (preserves x > y, cmd > file)
+  // Strip blockquote markers at line start; preserve x > y inline.
   cleaned = cleaned.replace(/^\s*>+\s?/gm, "");
   const firstLine = cleaned
     .split(/\r?\n/)
@@ -51,17 +66,11 @@ function truncateAtWordBoundary(text: string, maxLength: number): string {
   const slice = text.slice(0, maxLength);
   const lastSpace = slice.lastIndexOf(" ");
   if (lastSpace > maxLength * 0.5) {
-    // Cut at the word boundary and keep the trailing space so the ellipsis
-    // visibly follows a non-letter (signals the cut to the reader).
     return slice.slice(0, lastSpace) + " …";
   }
   return slice.slice(0, maxLength) + "…";
 }
 
-/**
- * Minimal interface describing what we use from the Anthropic SDK client.
- * Modeled this way so tests can inject a mock without instantiating the real client.
- */
 export interface TitlerClient {
   messages: {
     create: (
@@ -91,19 +100,6 @@ const SET_TITLE_TOOL: Anthropic.Messages.Tool = {
   },
 };
 
-function buildPrefixInstruction(spawnSource: SpawnSource | string | null | undefined): string {
-  switch (spawnSource) {
-    case "github-bot":
-      return 'Output format: "GitHub: <topic>". Replace any "PR #N" placeholder with a real topic. Comments become "GitHub: <ask>".';
-    case "slack-bot":
-      return 'Output format: "Slack: <topic>".';
-    case "linear-bot":
-      return 'Output format: "Linear: <ticket-id> – <topic>" if a ticket ID like "ABC-123" is present in the prompt; otherwise "Linear: <topic>".';
-    default:
-      return "Output format: just the topic, no prefix.";
-  }
-}
-
 const SYSTEM_MESSAGE = `You are naming a coding-agent session for display in a left-hand sidebar.
 The user prompt is the first message they sent in this session.
 Pick a short topic that summarizes what the session is about — what the user wants to do, or what they want changed.
@@ -118,7 +114,8 @@ You must respond by calling the ${SET_TITLE_TOOL_NAME} tool.`;
 interface GenerateTitleArgs {
   client: TitlerClient | null;
   prompt: string;
-  spawnSource: SpawnSource | string | null | undefined;
+  spawnSource: SpawnSource | null | undefined;
+  log?: Logger;
 }
 
 function sanitizeModelTitle(raw: string): string {
@@ -128,14 +125,10 @@ function sanitizeModelTitle(raw: string): string {
   return collapsed.slice(0, MAX_TITLE_LENGTH);
 }
 
-/**
- * Call Haiku to produce a session title. Returns null on any failure path
- * (network error, no client, malformed tool result, empty title, etc).
- */
 export async function generateTitle(args: GenerateTitleArgs): Promise<string | null> {
   if (!args.client) return null;
 
-  const userMessage = `${buildPrefixInstruction(args.spawnSource)}
+  const userMessage = `${getTitleMeta(args.spawnSource).instruction}
 
 User prompt:
 ${args.prompt}`;
@@ -166,23 +159,18 @@ ${args.prompt}`;
 
     const sanitized = sanitizeModelTitle(input.title);
     return sanitized.length > 0 ? sanitized : null;
-  } catch {
+  } catch (error) {
+    args.log?.warn("auto_rename.titler_error", { error });
     return null;
   }
 }
 
-/**
- * Build a deterministic, non-empty title from a prompt.
- * Guarantees: returns a non-empty string of at most MAX_TITLE_LENGTH characters,
- * with the appropriate source prefix for the spawnSource. If sanitization yields
- * nothing, returns the literal "Untitled session".
- */
 export function derivePromptTitle(
   prompt: string,
-  spawnSource: SpawnSource | string | null | undefined
+  spawnSource: SpawnSource | null | undefined
 ): string {
   const sanitized = sanitizePromptForTitle(prompt);
-  const { prefix } = getPrefixSpec(spawnSource);
+  const { prefix } = getTitleMeta(spawnSource);
 
   if (sanitized.length === 0) {
     return UNTITLED;
@@ -203,22 +191,37 @@ export function derivePromptTitle(
   return candidate;
 }
 
-export interface AutoRenameDeps {
+export interface TitleCommitDeps {
   repository: {
-    getSession: () => SessionRow | null;
     updateSessionTitle: (sessionId: string, title: string, updatedAt: number) => void;
-    markTitleAutoRenameAttempted: (sessionId: string, attemptedAt: number) => void;
   };
-  /** Returns a non-empty title, or null on any failure (network, malformed, empty). */
-  titler: (args: {
-    prompt: string;
-    spawnSource: SpawnSource | string | null | undefined;
-  }) => Promise<string | null>;
   syncSessionIndexTitle: (publicSessionId: string, title: string) => void;
   broadcast: (message: ServerMessage) => void;
+  now: () => number;
+}
+
+export function commitSessionTitle(
+  deps: TitleCommitDeps,
+  sessionId: string,
+  publicSessionId: string,
+  title: string
+): void {
+  deps.repository.updateSessionTitle(sessionId, title, deps.now());
+  deps.syncSessionIndexTitle(publicSessionId, title);
+  deps.broadcast({ type: "session_title", title });
+}
+
+export interface AutoRenameDeps extends TitleCommitDeps {
+  repository: TitleCommitDeps["repository"] & {
+    getSession: () => SessionRow | null;
+    markTitleAutoRenameAttempted: (sessionId: string, attemptedAt: number) => void;
+  };
+  titler: (args: {
+    prompt: string;
+    spawnSource: SpawnSource | null | undefined;
+  }) => Promise<string | null>;
   getPublicSessionId: (session: SessionRow) => string;
   log: Logger;
-  now: () => number;
 }
 
 interface RunAutoRenameArgs {
@@ -226,19 +229,6 @@ interface RunAutoRenameArgs {
   prompt: string;
 }
 
-/**
- * Background task that produces and applies an auto-generated session title.
- *
- * Invariants:
- * - title_manually_set wins. If a participant has explicitly renamed the session,
- *   no auto-rename ever overwrites them.
- * - One-shot. The marker `title_auto_rename_attempted_at` is set BEFORE the LLM
- *   call so a worker crash mid-call does not cause a second attempt on the next
- *   prompt.
- * - No nameless session. If the titler returns null AND the existing title is
- *   null/empty, we fall back to a deterministic prompt-derived title; if that
- *   also yields nothing, we write the literal "Untitled session".
- */
 export async function runAutoRename({ deps, prompt }: RunAutoRenameArgs): Promise<void> {
   const session = deps.repository.getSession();
   if (!session) return;
@@ -252,6 +242,7 @@ export async function runAutoRename({ deps, prompt }: RunAutoRenameArgs): Promis
     return;
   }
 
+  // Mark BEFORE the LLM call so a worker crash mid-call doesn't retry.
   deps.repository.markTitleAutoRenameAttempted(session.id, deps.now());
 
   const haikuTitle = await deps.titler({ prompt, spawnSource: session.spawn_source });
@@ -267,12 +258,10 @@ export async function runAutoRename({ deps, prompt }: RunAutoRenameArgs): Promis
   }
 
   const existing = fresh.title?.trim() ?? "";
-  const existingIsEmpty = existing.length === 0;
-
   let finalTitle: string;
   if (haikuTitle && haikuTitle.trim().length > 0) {
     finalTitle = haikuTitle;
-  } else if (existingIsEmpty) {
+  } else if (existing.length === 0) {
     finalTitle = derivePromptTitle(prompt, fresh.spawn_source);
   } else {
     deps.log.info("auto_rename.preserve_existing", {
@@ -282,9 +271,7 @@ export async function runAutoRename({ deps, prompt }: RunAutoRenameArgs): Promis
     return;
   }
 
-  deps.repository.updateSessionTitle(fresh.id, finalTitle, deps.now());
-  deps.syncSessionIndexTitle(deps.getPublicSessionId(fresh), finalTitle);
-  deps.broadcast({ type: "session_title", title: finalTitle });
+  commitSessionTitle(deps, fresh.id, deps.getPublicSessionId(fresh), finalTitle);
 
   deps.log.info("auto_rename.applied", {
     session_id: fresh.id,
