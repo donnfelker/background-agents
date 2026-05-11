@@ -1,19 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { env, runInDurableObject } from "cloudflare:test";
-import { initSession, initNamedSession, openClientWs, collectMessages, queryDO } from "./helpers";
+import { initNamedSession, openClientWs, collectMessages, queryDO } from "./helpers";
 import type { SessionDO } from "../../src/session/durable-object";
 
-async function waitForAutoRename(stub: DurableObjectStub, timeoutMs = 3000): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const rows = await queryDO<{
-      title_auto_rename_attempted_at: number | null;
-      title: string | null;
-    }>(stub, `SELECT title, title_auto_rename_attempted_at FROM session LIMIT 1`);
-    if (rows[0]?.title_auto_rename_attempted_at !== null) return;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  throw new Error("Auto-rename did not run within timeout");
+const AUTO_RENAME_TIMEOUT_MS = 3000;
+// Bounded wait for the negative case to assert no background auto-rename fired.
+// Not polling — a single setTimeout sufficient to surface an erroneously-scheduled write.
+const NO_BROADCAST_WAIT_MS = 200;
+
+function uniqueSessionName(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 describe("session auto-rename (integration)", () => {
@@ -24,14 +20,23 @@ describe("session auto-rename (integration)", () => {
   it("writes a non-empty title for a web-initiated session via deterministic fallback (no API key)", async () => {
     // env.ANTHROPIC_API_KEY is unset in the integration env, so the titler
     // returns null and we exercise the derivePromptTitle path.
-    const { stub } = await initSession();
+    const sessionName = uniqueSessionName("auto-rename-fallback");
+    const { stub } = await initNamedSession(sessionName);
 
-    // Clear any default title that initSession might have set so we exercise
-    // the "existing title null" branch explicitly.
+    // Clear any default title so we exercise the "existing title null" branch explicitly.
     await runInDurableObject(stub, (instance: SessionDO) => {
       instance.ctx.storage.sql.exec(
         `UPDATE session SET title = NULL WHERE id = (SELECT id FROM session LIMIT 1)`
       );
+    });
+
+    // Subscribe BEFORE sending the prompt so we capture the session_title broadcast.
+    // runAutoRename broadcasts session_title AFTER persisting the title, so receiving
+    // the broadcast is a deterministic signal that the title write is complete — no polling.
+    const { ws } = await openClientWs(sessionName, { subscribe: true, userId: "user-1" });
+    const collector = collectMessages(ws, {
+      until: (msg) => msg.type === "session_title",
+      timeoutMs: AUTO_RENAME_TIMEOUT_MS,
     });
 
     const res = await stub.fetch("http://internal/internal/prompt", {
@@ -45,7 +50,11 @@ describe("session auto-rename (integration)", () => {
     });
     expect(res.status).toBe(200);
 
-    await waitForAutoRename(stub);
+    const messages = await collector;
+    const titleMessage = messages.find((m) => m.type === "session_title");
+    expect(titleMessage).toBeDefined();
+    // "user" spawnSource → no prefix
+    expect(titleMessage!.title).toBe("Refactor the session sidebar layout");
 
     const rows = await queryDO<{
       title: string | null;
@@ -53,14 +62,12 @@ describe("session auto-rename (integration)", () => {
     }>(stub, `SELECT title, title_auto_rename_attempted_at FROM session LIMIT 1`);
     expect(rows).toHaveLength(1);
     expect(rows[0].title_auto_rename_attempted_at).not.toBeNull();
-    expect(rows[0].title).not.toBeNull();
-    expect(rows[0].title!.length).toBeGreaterThan(0);
-    // "user" spawnSource → no prefix
     expect(rows[0].title).toBe("Refactor the session sidebar layout");
   });
 
   it("does not auto-rename when title_manually_set is 1", async () => {
-    const { stub } = await initSession({ title: "User Chose This" });
+    const sessionName = uniqueSessionName("auto-rename-manual");
+    const { stub } = await initNamedSession(sessionName, { title: "User Chose This" });
 
     // Simulate the user's manual rename PATCH having already happened.
     await runInDurableObject(stub, (instance: SessionDO) => {
@@ -70,14 +77,20 @@ describe("session auto-rename (integration)", () => {
       );
     });
 
+    // Subscribe and collect for a bounded window — assert no session_title broadcast
+    // arrives. maybeScheduleAutoRename returns synchronously without ctx.waitUntil when
+    // title_manually_set is 1, but we collect over a window to surface any regression.
+    const { ws } = await openClientWs(sessionName, { subscribe: true, userId: "user-1" });
+    const collector = collectMessages(ws, { timeoutMs: NO_BROADCAST_WAIT_MS });
+
     await stub.fetch("http://internal/internal/prompt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: "Anything", authorId: "user-1", source: "web" }),
     });
 
-    // Give the would-be-background-task time to NOT run.
-    await new Promise((r) => setTimeout(r, 200));
+    const messages = await collector;
+    expect(messages.some((m) => m.type === "session_title")).toBe(false);
 
     const rows = await queryDO<{
       title: string | null;
@@ -88,11 +101,18 @@ describe("session auto-rename (integration)", () => {
   });
 
   it("falls back to 'Untitled session' when prompt is whitespace AND existing title is empty", async () => {
-    const { stub } = await initSession();
+    const sessionName = uniqueSessionName("auto-rename-whitespace");
+    const { stub } = await initNamedSession(sessionName);
     await runInDurableObject(stub, (instance: SessionDO) => {
       instance.ctx.storage.sql.exec(
         `UPDATE session SET title = NULL WHERE id = (SELECT id FROM session LIMIT 1)`
       );
+    });
+
+    const { ws } = await openClientWs(sessionName, { subscribe: true, userId: "user-1" });
+    const collector = collectMessages(ws, {
+      until: (msg) => msg.type === "session_title",
+      timeoutMs: AUTO_RENAME_TIMEOUT_MS,
     });
 
     await stub.fetch("http://internal/internal/prompt", {
@@ -101,18 +121,31 @@ describe("session auto-rename (integration)", () => {
       body: JSON.stringify({ content: "   \n\t  ", authorId: "user-1", source: "web" }),
     });
 
-    await waitForAutoRename(stub);
+    const messages = await collector;
+    const titleMessage = messages.find((m) => m.type === "session_title");
+    expect(titleMessage?.title).toBe("Untitled session");
 
     const rows = await queryDO<{ title: string | null }>(stub, `SELECT title FROM session LIMIT 1`);
     expect(rows[0].title).toBe("Untitled session");
   });
 
   it("only triggers once even if multiple prompts arrive quickly", async () => {
-    const { stub } = await initSession();
+    const sessionName = uniqueSessionName("auto-rename-once");
+    const { stub } = await initNamedSession(sessionName);
     await runInDurableObject(stub, (instance: SessionDO) => {
       instance.ctx.storage.sql.exec(
         `UPDATE session SET title = NULL WHERE id = (SELECT id FROM session LIMIT 1)`
       );
+    });
+
+    // Two-phase wait: (a) wait up to AUTO_RENAME_TIMEOUT_MS for the FIRST session_title
+    // broadcast so we never time out before the (background) rename fires; (b) then collect
+    // for a short tail window to assert no SECOND broadcast — that's what proves
+    // "only triggers once."
+    const { ws } = await openClientWs(sessionName, { subscribe: true, userId: "user-1" });
+    const firstCollector = collectMessages(ws, {
+      until: (msg) => msg.type === "session_title",
+      timeoutMs: AUTO_RENAME_TIMEOUT_MS,
     });
 
     await Promise.all([
@@ -128,10 +161,15 @@ describe("session auto-rename (integration)", () => {
       }),
     ]);
 
-    await waitForAutoRename(stub);
+    const firstMessages = await firstCollector;
+    const firstTitleMessages = firstMessages.filter((m) => m.type === "session_title");
+    expect(firstTitleMessages).toHaveLength(1);
+    expect(firstTitleMessages[0].title).toMatch(/(First prompt|Second prompt)/);
 
-    // Either the first or the second won the race, but the title should be set
-    // and the attempted marker should be set.
+    // Tail: no second broadcast should follow.
+    const tailMessages = await collectMessages(ws, { timeoutMs: NO_BROADCAST_WAIT_MS });
+    expect(tailMessages.some((m) => m.type === "session_title")).toBe(false);
+
     const rows = await queryDO<{
       title: string | null;
       title_auto_rename_attempted_at: number | null;
@@ -186,7 +224,7 @@ describe("session auto-rename (integration)", () => {
     // Start collecting AFTER subscribe completes — wait specifically for session_title.
     const collector = collectMessages(ws, {
       until: (msg) => msg.type === "session_title",
-      timeoutMs: 3000,
+      timeoutMs: AUTO_RENAME_TIMEOUT_MS,
     });
 
     const res = await stub.fetch("http://internal/internal/prompt", {
