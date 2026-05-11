@@ -762,7 +762,16 @@ function SessionContent({
                   tabIndex={0}
                   title="Click to rename"
                 >
-                  <ScrambleText text={resolvedTitle} />
+                  {sessionState ? (
+                    // Animate title changes only AFTER the session has loaded.
+                    // Otherwise the fallback-to-real-title transition reads as
+                    // a "rename" and produces a spurious first scramble that
+                    // the sidebar doesn't mirror (since the sidebar's cache
+                    // already holds the real title from the list fetch).
+                    <ScrambleText text={resolvedTitle} />
+                  ) : (
+                    <span>{resolvedTitle}</span>
+                  )}
                 </h1>
               )}
               <p className="text-sm text-muted-foreground">{sessionDisplayInfo.repoLabel}</p>

@@ -2,7 +2,11 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { mutate } from "swr";
-import { SIDEBAR_SESSIONS_KEY } from "@/lib/session-list";
+import {
+  applyTitleUpdate,
+  SIDEBAR_SESSIONS_KEY,
+  type SessionListResponse,
+} from "@/lib/session-list";
 import type { Artifact, SandboxEvent } from "@/types/session";
 import type {
   ParticipantPresence,
@@ -290,6 +294,7 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
           if (data.state) {
             const bufferedTitle = pendingTitleRef.current;
             pendingTitleRef.current = null;
+            const effectiveTitle = bufferedTitle ?? data.state.title;
             setSessionState({
               ...data.state,
               // Backward-compatible default for older sessions that may omit this.
@@ -298,6 +303,26 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
               // Apply any session_title that arrived before "subscribed".
               ...(bufferedTitle ? { title: bufferedTitle } : {}),
             });
+            if (effectiveTitle) {
+              // Mirror the subscribed-delivered (or buffered) title into the
+              // sidebar SWR cache. When the auto-rename titler commits before
+              // the WS subscribe handshake finishes, the new title rides in
+              // data.state.title — not as a separate session_title event —
+              // so the sidebar cache would otherwise stay stale until an
+              // unrelated event triggered a revalidate. Skip when the cached
+              // entry already matches to avoid spuriously bumping updatedAt
+              // on plain session opens.
+              void mutate<SessionListResponse>(
+                SIDEBAR_SESSIONS_KEY,
+                (current) => {
+                  if (!current) return current;
+                  const existing = current.sessions.find((s) => s.id === sessionId);
+                  if (!existing || existing.title === effectiveTitle) return current;
+                  return applyTitleUpdate(current, sessionId, effectiveTitle, Date.now());
+                },
+                { revalidate: false }
+              );
+            }
           }
           // Store the current user's participant ID and info for author attribution
           if (data.participantId) {
@@ -454,6 +479,15 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
             const incomingTitle = data.title;
             if (subscribedRef.current) {
               setSessionState((prev) => (prev ? { ...prev, title: incomingTitle } : null));
+              // Mirror the title into the sidebar SWR cache so the list
+              // updates in lockstep with the detail header. Without this, the
+              // sidebar stayed stale until an unrelated event (e.g.
+              // session_status) happened to revalidate the list.
+              void mutate<SessionListResponse>(
+                SIDEBAR_SESSIONS_KEY,
+                (current) => applyTitleUpdate(current, sessionId, incomingTitle, Date.now()),
+                { revalidate: false }
+              );
             } else {
               // Subscribed hasn't landed yet — buffer so the "subscribed"
               // handler can apply the title once state is initialized.
