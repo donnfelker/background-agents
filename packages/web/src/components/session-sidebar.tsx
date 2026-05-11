@@ -14,6 +14,7 @@ import {
 import { useSession, signOut } from "next-auth/react";
 import useSWR, { mutate } from "swr";
 import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
+import { ScrambleText } from "@/components/ScrambleText";
 import { archiveSession } from "@/lib/archive-session";
 import { formatRelativeTime, isInactiveSession } from "@/lib/time";
 import {
@@ -764,7 +765,10 @@ function SessionListItem({
             onTouchCancel={handleTouchEnd}
             className="block pr-8"
           >
-            <div className="truncate text-sm font-medium text-foreground">{displayTitle}</div>
+            <ScrambleText
+              text={displayTitle}
+              className="block truncate text-sm font-medium text-foreground"
+            />
             <div className="flex items-center gap-1 mt-0.5 text-xs text-muted-foreground">
               <span>{relativeTime}</span>
               <span>·</span>

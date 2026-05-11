@@ -15,6 +15,7 @@ import {
 } from "react";
 import { useSessionSocket } from "@/hooks/use-session-socket";
 import { SafeMarkdown } from "@/components/safe-markdown";
+import { ScrambleText } from "@/components/ScrambleText";
 import { ToolCallGroup } from "@/components/tool-call-group";
 import { ScreenshotArtifactCard } from "@/components/screenshot-artifact-card";
 import { MediaLightbox } from "@/components/media-lightbox";
@@ -761,7 +762,7 @@ function SessionContent({
                   tabIndex={0}
                   title="Click to rename"
                 >
-                  {resolvedTitle}
+                  <ScrambleText text={resolvedTitle} />
                 </h1>
               )}
               <p className="text-sm text-muted-foreground">{sessionDisplayInfo.repoLabel}</p>
