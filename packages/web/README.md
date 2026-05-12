@@ -65,7 +65,10 @@ GitHub App:
 
 Required permissions for the GitHub App:
 
-- **Account permissions**: Email addresses (read-only)
+- **Account permissions**: Email addresses (read-only) — required for `ALLOWED_EMAIL_DOMAINS` to
+  match against any verified email on the user's GitHub account. If this is missing, GitHub returns
+  403 from `/user/emails` and sign-in falls back to a single email (the public one, or the primary),
+  which can deny users whose primary email is not on an allowlisted domain.
 - **Repository permissions**: Contents (read & write) - for repo operations
 
 ### Environment Variables
@@ -83,7 +86,9 @@ NEXTAUTH_SECRET=your_random_secret  # Generate: openssl rand -base64 32
 
 # Access Control
 ALLOWED_USERS=username1,username2          # Comma-separated GitHub usernames
-ALLOWED_EMAIL_DOMAINS=example.com,corp.io  # Comma-separated email domains
+ALLOWED_EMAIL_DOMAINS=example.com,corp.io  # Comma-separated email domains.
+                                            # Matches against ANY verified email on
+                                            # the user's GitHub account.
 UNSAFE_ALLOW_ALL_USERS=false               # Set true to explicitly allow all users when both lists are empty
 
 # Control Plane
@@ -95,6 +100,9 @@ NEXT_PUBLIC_WS_URL=ws://localhost:8787
 > denied unless `UNSAFE_ALLOW_ALL_USERS=true`. For Terraform-managed production deploys, Terraform
 > also fails validation unless you set at least one allowlist or explicitly opt in with
 > `unsafe_allow_all_users = true`.
+>
+> Adding an unverified email to a GitHub account does not grant access — only emails marked
+> `verified: true` by GitHub are considered.
 
 ### Development
 

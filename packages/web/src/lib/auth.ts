@@ -1,6 +1,13 @@
 import type { NextAuthOptions } from "next-auth";
 import GitHubProvider from "next-auth/providers/github";
-import { checkAccessAllowed, parseAllowlist, parseBooleanEnv } from "./access-control";
+import {
+  checkAccessAllowed,
+  chooseAccessEmails,
+  extractVerifiedEmails,
+  findPrimaryVerifiedEmail,
+  parseAllowlist,
+  parseBooleanEnv,
+} from "./access-control";
 
 // Extend NextAuth types to include GitHub-specific user info
 declare module "next-auth" {
@@ -36,6 +43,42 @@ export const authOptions: NextAuthOptions = {
           scope: "read:user user:email repo",
         },
       },
+      userinfo: {
+        url: "https://api.github.com/user",
+        async request({ client, tokens }) {
+          // Standard userinfo call — same as NextAuth's default GitHub provider.
+          const profile = (await client.userinfo(tokens.access_token ?? "")) as {
+            email?: string | null;
+            [key: string]: unknown;
+          };
+
+          // Fetch the full email list so the access-control gate can consider
+          // verified secondary emails, not just the single email /user returns.
+          let verifiedEmails: string[] = [];
+          try {
+            const res = await fetch("https://api.github.com/user/emails", {
+              headers: {
+                Authorization: `token ${tokens.access_token ?? ""}`,
+              },
+            });
+            if (res.ok) {
+              const emailsResponse = (await res.json()) as unknown;
+              verifiedEmails = extractVerifiedEmails(emailsResponse);
+
+              // Preserve NextAuth's default fallback: if /user returned no email,
+              // pick the primary verified email so user.email stays populated.
+              if (!profile.email) {
+                const primary = findPrimaryVerifiedEmail(emailsResponse);
+                if (primary) profile.email = primary;
+              }
+            }
+          } catch {
+            // Fail soft: keep verifiedEmails = []. signIn falls back to user.email.
+          }
+
+          return { ...profile, email: profile.email ?? undefined, verifiedEmails };
+        },
+      },
     }),
   ],
   callbacks: {
@@ -46,10 +89,12 @@ export const authOptions: NextAuthOptions = {
         unsafeAllowAllUsers: parseBooleanEnv(process.env.UNSAFE_ALLOW_ALL_USERS),
       };
 
-      const githubProfile = profile as { login?: string };
+      const githubProfile = profile as { login?: string; verifiedEmails?: string[] };
+      const emails = chooseAccessEmails(githubProfile.verifiedEmails, user.email);
+
       const isAllowed = checkAccessAllowed(config, {
         githubUsername: githubProfile.login,
-        email: user.email ?? undefined,
+        emails,
       });
 
       if (!isAllowed) {

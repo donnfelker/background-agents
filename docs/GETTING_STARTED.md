@@ -215,21 +215,27 @@ access.
    - Issues: **Read & Write** _(required if enabling GitHub bot)_
    - Pull requests: **Read & Write**
    - Metadata: **Read-only**
-6. Click **"Create GitHub App"**
-7. Note the **App ID** and **Client ID** (top of page)
-8. Under **"Client secrets"**, click **"Generate a new client secret"** and note the **Client
+6. Set **Account permissions**:
+   - Email addresses: **Read-only** _(required so `ALLOWED_EMAIL_DOMAINS` can match against any
+     verified email on a user's GitHub account, not just their public email — without this
+     permission the App gets a 403 from `/user/emails` and sign-in falls back to whatever single
+     email GitHub returns from `/user`, which can lock out users whose primary email is not on an
+     allowlisted domain)_
+7. Click **"Create GitHub App"**
+8. Note the **App ID** and **Client ID** (top of page)
+9. Under **"Client secrets"**, click **"Generate a new client secret"** and note the **Client
    Secret**
-9. Scroll down to **"Private keys"** and click **"Generate a private key"** (downloads a .pem file)
-10. **Convert the key to PKCS#8 format** (required for Cloudflare Workers):
+10. Scroll down to **"Private keys"** and click **"Generate a private key"** (downloads a .pem file)
+11. **Convert the key to PKCS#8 format** (required for Cloudflare Workers):
     ```bash
     openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt \
       -in ~/Downloads/your-app-name.*.private-key.pem \
       -out private-key-pkcs8.pem
     ```
-11. **Install the app** on your account/organization:
+12. **Install the app** on your account/organization:
     - Click "Install App" in the sidebar
     - Select the repositories you want Open-Inspect to access
-12. Note the **Installation ID** from the URL after installing:
+13. Note the **Installation ID** from the URL after installing:
     ```
     https://github.com/settings/installations/INSTALLATION_ID
     ```
@@ -417,7 +423,8 @@ enable_service_bindings        = false
 
 # Access Control (set at least one allowlist for production)
 allowed_users         = "your-github-username"  # Comma-separated GitHub usernames, or empty
-allowed_email_domains = ""                      # Comma-separated domains (e.g., "example.com,corp.io")
+allowed_email_domains = ""                      # Comma-separated domains (e.g., "example.com,corp.io").
+                                                # Matches against any verified email on the user's GitHub account.
 
 # Explicitly opt into open access only if you want any authenticated GitHub user
 # to be able to sign in when both allowlists are empty.
@@ -426,7 +433,8 @@ unsafe_allow_all_users = false
 
 > **Note**: Review `allowed_users` and `allowed_email_domains` carefully - these control who can
 > sign in. Terraform now fails if both are empty unless you explicitly set
-> `unsafe_allow_all_users = true`.
+> `unsafe_allow_all_users = true`. Adding an unverified email to a GitHub account does not grant
+> access — only emails GitHub reports as `verified` are considered.
 
 ---
 
@@ -652,44 +660,44 @@ Enable automatic deployments when you push to main by adding GitHub Secrets.
 
 Go to your fork's Settings → Secrets and variables → Actions, and add:
 
-| Secret Name                   | Value                                                                         |
-| ----------------------------- | ----------------------------------------------------------------------------- |
-| `CLOUDFLARE_API_TOKEN`        | Your Cloudflare API token                                                     |
-| `CLOUDFLARE_ACCOUNT_ID`       | Your Cloudflare account ID                                                    |
-| `CLOUDFLARE_WORKER_SUBDOMAIN` | Your workers.dev subdomain                                                    |
-| `DEPLOYMENT_NAME`             | Your deployment name                                                          |
-| `R2_ACCESS_KEY_ID`            | R2 access key ID                                                              |
-| `R2_SECRET_ACCESS_KEY`        | R2 secret access key                                                          |
-| `WEB_PLATFORM`                | `vercel` or `cloudflare`                                                      |
-| `VERCEL_API_TOKEN`            | Vercel API token _(only if `web_platform = "vercel"`)_                        |
-| `VERCEL_TEAM_ID`              | Vercel team/account ID _(only if `web_platform = "vercel"`)_                  |
-| `VERCEL_PROJECT_ID`           | Vercel project ID _(only if `web_platform = "vercel"`)_                       |
-| `NEXTAUTH_URL`                | Your web app URL                                                              |
-| `MODAL_TOKEN_ID`              | Modal token ID                                                                |
-| `MODAL_TOKEN_SECRET`          | Modal token secret                                                            |
-| `MODAL_WORKSPACE`             | Modal workspace name                                                          |
-| `GH_OAUTH_CLIENT_ID`          | GitHub App OAuth client ID                                                    |
-| `GH_OAUTH_CLIENT_SECRET`      | GitHub App OAuth client secret                                                |
-| `GH_APP_ID`                   | GitHub App ID                                                                 |
-| `GH_APP_PRIVATE_KEY`          | GitHub App private key (PKCS#8 format)                                        |
-| `GH_APP_INSTALLATION_ID`      | GitHub App installation ID                                                    |
-| `ENABLE_SLACK_BOT`            | `true` to deploy Slack bot, `false` to skip (default: `true`)                 |
-| `SLACK_BOT_TOKEN`             | Slack bot token (required if enabled)                                         |
-| `SLACK_SIGNING_SECRET`        | Slack signing secret (required if enabled)                                    |
-| `ANTHROPIC_API_KEY`           | Anthropic API key                                                             |
-| `TOKEN_ENCRYPTION_KEY`        | Generated encryption key (OAuth tokens)                                       |
-| `REPO_SECRETS_ENCRYPTION_KEY` | Generated encryption key (repo secrets)                                       |
-| `INTERNAL_CALLBACK_SECRET`    | Generated callback secret                                                     |
-| `MODAL_API_SECRET`            | Generated Modal API secret                                                    |
-| `NEXTAUTH_SECRET`             | Generated NextAuth secret                                                     |
-| `ALLOWED_USERS`               | Comma-separated GitHub usernames (or empty for all users)                     |
-| `ALLOWED_EMAIL_DOMAINS`       | Comma-separated email domains (or empty for all domains)                      |
-| `ENABLE_GITHUB_BOT`           | `true` to deploy GitHub bot worker (or empty to skip)                         |
-| `GH_WEBHOOK_SECRET`           | GitHub webhook secret (required if GitHub bot enabled)                        |
-| `GH_BOT_USERNAME`             | GitHub App bot username, e.g., `my-app[bot]` (required if GitHub bot enabled) |
-| `APP_NAME`                    | Optional display name for whitelabeling (default: `Open-Inspect`)             |
-| `APP_SHORT_NAME`              | Optional short label for sidebar header (default: `Inspect`)                  |
-| `APP_ICON_URL`                | Optional URL to a custom logo/favicon (default: built-in icon)                |
+| Secret Name                   | Value                                                                                                       |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `CLOUDFLARE_API_TOKEN`        | Your Cloudflare API token                                                                                   |
+| `CLOUDFLARE_ACCOUNT_ID`       | Your Cloudflare account ID                                                                                  |
+| `CLOUDFLARE_WORKER_SUBDOMAIN` | Your workers.dev subdomain                                                                                  |
+| `DEPLOYMENT_NAME`             | Your deployment name                                                                                        |
+| `R2_ACCESS_KEY_ID`            | R2 access key ID                                                                                            |
+| `R2_SECRET_ACCESS_KEY`        | R2 secret access key                                                                                        |
+| `WEB_PLATFORM`                | `vercel` or `cloudflare`                                                                                    |
+| `VERCEL_API_TOKEN`            | Vercel API token _(only if `web_platform = "vercel"`)_                                                      |
+| `VERCEL_TEAM_ID`              | Vercel team/account ID _(only if `web_platform = "vercel"`)_                                                |
+| `VERCEL_PROJECT_ID`           | Vercel project ID _(only if `web_platform = "vercel"`)_                                                     |
+| `NEXTAUTH_URL`                | Your web app URL                                                                                            |
+| `MODAL_TOKEN_ID`              | Modal token ID                                                                                              |
+| `MODAL_TOKEN_SECRET`          | Modal token secret                                                                                          |
+| `MODAL_WORKSPACE`             | Modal workspace name                                                                                        |
+| `GH_OAUTH_CLIENT_ID`          | GitHub App OAuth client ID                                                                                  |
+| `GH_OAUTH_CLIENT_SECRET`      | GitHub App OAuth client secret                                                                              |
+| `GH_APP_ID`                   | GitHub App ID                                                                                               |
+| `GH_APP_PRIVATE_KEY`          | GitHub App private key (PKCS#8 format)                                                                      |
+| `GH_APP_INSTALLATION_ID`      | GitHub App installation ID                                                                                  |
+| `ENABLE_SLACK_BOT`            | `true` to deploy Slack bot, `false` to skip (default: `true`)                                               |
+| `SLACK_BOT_TOKEN`             | Slack bot token (required if enabled)                                                                       |
+| `SLACK_SIGNING_SECRET`        | Slack signing secret (required if enabled)                                                                  |
+| `ANTHROPIC_API_KEY`           | Anthropic API key                                                                                           |
+| `TOKEN_ENCRYPTION_KEY`        | Generated encryption key (OAuth tokens)                                                                     |
+| `REPO_SECRETS_ENCRYPTION_KEY` | Generated encryption key (repo secrets)                                                                     |
+| `INTERNAL_CALLBACK_SECRET`    | Generated callback secret                                                                                   |
+| `MODAL_API_SECRET`            | Generated Modal API secret                                                                                  |
+| `NEXTAUTH_SECRET`             | Generated NextAuth secret                                                                                   |
+| `ALLOWED_USERS`               | Comma-separated GitHub usernames (or empty for all users)                                                   |
+| `ALLOWED_EMAIL_DOMAINS`       | Comma-separated email domains. Matches any verified email on the GitHub account (or empty for all domains). |
+| `ENABLE_GITHUB_BOT`           | `true` to deploy GitHub bot worker (or empty to skip)                                                       |
+| `GH_WEBHOOK_SECRET`           | GitHub webhook secret (required if GitHub bot enabled)                                                      |
+| `GH_BOT_USERNAME`             | GitHub App bot username, e.g., `my-app[bot]` (required if GitHub bot enabled)                               |
+| `APP_NAME`                    | Optional display name for whitelabeling (default: `Open-Inspect`)                                           |
+| `APP_SHORT_NAME`              | Optional short label for sidebar header (default: `Inspect`)                                                |
+| `APP_ICON_URL`                | Optional URL to a custom logo/favicon (default: built-in icon)                                              |
 
 **Bulk upload secrets with `gh` CLI:**
 
