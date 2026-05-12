@@ -1,5 +1,6 @@
 import type { NextAuthOptions } from "next-auth";
 import GitHubProvider from "next-auth/providers/github";
+import { DEFAULT_APP_NAME } from "@open-inspect/shared";
 import {
   checkAccessAllowed,
   chooseAccessEmails,
@@ -56,9 +57,15 @@ export const authOptions: NextAuthOptions = {
           // verified secondary emails, not just the single email /user returns.
           let verifiedEmails: string[] = [];
           try {
+            // GitHub's REST API requires a User-Agent header. Node's fetch sets one by
+            // default; Cloudflare Workers' fetch does not — without this, /user/emails
+            // returns 403 "Request forbidden by administrative rules" in CF Workers
+            // even when the App has Email addresses permission.
             const res = await fetch("https://api.github.com/user/emails", {
               headers: {
                 Authorization: `token ${tokens.access_token ?? ""}`,
+                "User-Agent": DEFAULT_APP_NAME,
+                Accept: "application/vnd.github+json",
               },
             });
             if (res.ok) {
